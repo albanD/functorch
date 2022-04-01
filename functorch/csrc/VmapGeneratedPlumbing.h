@@ -25025,7 +25025,7 @@ at::Tensor _nested_tensor_generated_plumbing(at::TensorList list, c10::optional<
   TORCH_INTERNAL_ASSERT(maybe_layer.has_value());
   int64_t cur_level = maybe_layer->layerId();
   if (!isBatchedAtLevel(list, cur_level)) {
-    return at::_ops::_nested_tensor::call(list, dtype, layout, device, pin_memory);
+    return at::_ops::nested_tensor::call(list, dtype, layout, device, pin_memory);
   }
 
   auto results = batch_rule(list, dtype, layout, device, pin_memory);
