@@ -4,6 +4,7 @@
 # This source code is licensed under the BSD-style license found in the
 # LICENSE file in the root directory of this source tree.
 import functools
+from site import ENABLE_USER_SITE
 from typing import Any, Dict, Optional, Tuple, Callable, Union
 import torch
 from torch._C import _disabled_torch_function_impl
@@ -12,11 +13,11 @@ from torch.fx import Tracer, GraphModule
 import torch.fx as fx
 from torch.fx.passes.shape_prop import _extract_tensor_metadata
 from contextlib import contextmanager
+from torch.utils._python_dispatch import enable_python_mode
 
 aten = torch.ops.aten
 
 CURRENT_DECOMPOSITION_TABLE = {}
-
 
 @contextmanager
 def no_dispatch():
@@ -80,10 +81,13 @@ class PythonTensor(torch.Tensor):
         def unwrap_proxy(e):
             return e.proxy if isinstance(e, PythonTensor) else e
 
-        proxy_args = pytree.tree_map(unwrap_proxy, args)
-        proxy_kwargs = pytree.tree_map(unwrap_proxy, kwargs)
+        with no_dispatch():
+            proxy_args = pytree.tree_map(unwrap_proxy, args)
+            proxy_kwargs = pytree.tree_map(unwrap_proxy, kwargs)
 
-        proxy_out = func(*proxy_args, **proxy_kwargs)
+        with no_dispatch():
+            with torch.overrides.push_torch_function_mode(...):
+                proxy_out = func(*proxy_args, **proxy_kwargs)
 
         # Kind of a hacky way to test if an op is in-place or not
         if func.__name__[-1] == "_" and func.__name__[0] != "_":
@@ -104,15 +108,24 @@ class PythonTensor(torch.Tensor):
                 return PythonTensor(e, proxy)
             else:
                 return e
-        if isinstance(real_out, tuple):
-            return tuple([wrap_with_proxy(e, proxy_out[idx]) for idx, e in enumerate(real_out)])
-        elif isinstance(real_out, list):
-            return list([wrap_with_proxy(e, proxy_out[idx]) for idx, e in enumerate(real_out)])
-        elif isinstance(real_out, torch.Tensor):
-            return wrap_with_proxy(real_out, proxy_out)
-        else:
-            return real_out
+        with no_dispatch():
+            if isinstance(real_out, tuple):
+                return tuple([wrap_with_proxy(e, proxy_out[idx]) for idx, e in enumerate(real_out)])
+            elif isinstance(real_out, list):
+                return list([wrap_with_proxy(e, proxy_out[idx]) for idx, e in enumerate(real_out)])
+            elif isinstance(real_out, torch.Tensor):
+                return wrap_with_proxy(real_out, proxy_out)
+            else:
+                return real_out
 
+
+class ProxyMode(torch.overrides.TorchFunctionMode):
+    def __init__(self, node, tracer=None):
+        self.wrapped = fx.Proxy(node=node, tracer=tracer)
+
+    def __torch_function__(self, *args, **kwargs):
+        kwargs = kwargs + {'blerghblerghthisisterrible': self.wrapped}
+        return self.wrapped.__torch_function__(*args, **kwargs)
 
 class PythonKeyTracer(Tracer):
     def __init__(self):
@@ -156,6 +169,9 @@ class PythonKeyTracer(Tracer):
             return self.create_node('get_attr', qualname, (), {})
         return super().create_arg(a)
 
+    def trace(self, root, concrete_args):
+        with enable_python_mode(PythonTensor):
+            return super().trace(root, concrete_args)
 
 def pythonkey_trace(
     root: Union[torch.nn.Module, Callable], concrete_args: Optional[Dict[str, Any]] = None
@@ -175,7 +191,8 @@ def wrap_key(f, inps):
         assert(len(flat_args) == len(flat_inps))
         for idx, arg in enumerate(flat_args):
             if isinstance(flat_inps[idx], torch.Tensor):
-                flat_args[idx] = PythonTensor(flat_inps[idx], arg)
+                with no_dispatch():
+                    flat_args[idx] = PythonTensor(flat_inps[idx], arg)
             else:
                 flat_args[idx] = flat_inps[idx]
 
@@ -196,6 +213,7 @@ def make_fx(f, decomposition_table={}):
         phs = pytree.tree_map(lambda x: fx.PH, args)
         with pythonkey_decompose(decomposition_table):
             t = pythonkey_trace(wrap_key(f, args), concrete_args=tuple(phs))
+        print(t.graph)
         return t
 
     return wrapped
