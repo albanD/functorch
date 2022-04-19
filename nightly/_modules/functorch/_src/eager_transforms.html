@@ -124,7 +124,7 @@
               
               
                 <div class="version">
-                  <a href='https://pytorch.org/functorch/versions.html'>nightly (0.2.0a0+386a541) &#x25BC</a>
+                  <a href='https://pytorch.org/functorch/versions.html'>nightly (0.2.0a0+d041937) &#x25BC</a>
                 </div>
               
             
@@ -1450,21 +1450,35 @@
     <span class="k">return</span> <span class="n">tree_map</span><span class="p">(</span><span class="n">partial</span><span class="p">(</span><span class="n">_maybe_wrap_functional_tensor</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="n">level</span><span class="p">),</span> <span class="n">tensor_pytree</span><span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">_maybe_unwrap_functional_tensor</span><span class="p">(</span><span class="n">maybe_tensor</span><span class="p">):</span>
+<span class="k">def</span> <span class="nf">_maybe_unwrap_functional_tensor</span><span class="p">(</span><span class="n">maybe_tensor</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">reapply_views</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
     <span class="k">if</span> <span class="ow">not</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">maybe_tensor</span><span class="p">,</span> <span class="n">torch</span><span class="o">.</span><span class="n">Tensor</span><span class="p">):</span>
         <span class="k">return</span> <span class="n">maybe_tensor</span>
-    <span class="k">return</span> <span class="n">_unwrap_functional_tensor</span><span class="p">(</span><span class="n">maybe_tensor</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">_unwrap_functional_tensor</span><span class="p">(</span><span class="n">maybe_tensor</span><span class="p">,</span> <span class="n">reapply_views</span><span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">_unwrap_all_tensors_from_functional</span><span class="p">(</span><span class="n">tensor_pytree</span><span class="p">):</span>
-    <span class="k">return</span> <span class="n">tree_map</span><span class="p">(</span><span class="n">_maybe_unwrap_functional_tensor</span><span class="p">,</span> <span class="n">tensor_pytree</span><span class="p">)</span>
+<span class="k">def</span> <span class="nf">_unwrap_all_tensors_from_functional</span><span class="p">(</span><span class="n">tensor_pytree</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">reapply_views</span><span class="p">:</span> <span class="nb">bool</span><span class="p">):</span>
+    <span class="k">return</span> <span class="n">tree_map</span><span class="p">(</span><span class="k">lambda</span> <span class="n">t</span><span class="p">:</span> <span class="n">_maybe_unwrap_functional_tensor</span><span class="p">(</span><span class="n">t</span><span class="p">,</span> <span class="n">reapply_views</span><span class="o">=</span><span class="n">reapply_views</span><span class="p">),</span> <span class="n">tensor_pytree</span><span class="p">)</span>
 
 
-<span class="k">def</span> <span class="nf">functionalize</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">:</span>
+<span class="k">def</span> <span class="nf">functionalize</span><span class="p">(</span><span class="n">func</span><span class="p">:</span> <span class="n">Callable</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">remove</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">&#39;mutations&#39;</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Callable</span><span class="p">:</span>
+    <span class="k">if</span> <span class="n">remove</span> <span class="o">==</span> <span class="s1">&#39;mutations&#39;</span><span class="p">:</span>
+        <span class="n">reapply_views</span> <span class="o">=</span> <span class="kc">True</span>
+    <span class="k">elif</span> <span class="n">remove</span> <span class="o">==</span> <span class="s1">&#39;mutations_and_views&#39;</span><span class="p">:</span>
+        <span class="n">reapply_views</span> <span class="o">=</span> <span class="kc">False</span>
+    <span class="k">else</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">RuntimeError</span><span class="p">(</span>
+            <span class="sa">f</span><span class="s2">&quot;functionalize(f, remove=&#39;mutations&#39;): received invalid argument for remove=</span><span class="si">{</span><span class="n">remove</span><span class="si">}</span><span class="s2">.&quot;</span>
+            <span class="s2">&quot; Valid options are:</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;     remove=&#39;mutations&#39;: all inplace and out= operators will be removed from the program, and replaced&quot;</span>
+            <span class="s2">&quot; with their out-of-place equivalents.</span><span class="se">\n</span><span class="s2">&quot;</span>
+            <span class="s2">&quot;     remove=&#39;mutations_and_views&#39;: In addition to the above, all aliasing operators </span><span class="si">{view}</span><span class="s2"> will be&quot;</span>
+            <span class="s2">&quot; replaced with their non-aliasing counterparts, </span><span class="si">{view}</span><span class="s2">_copy.</span><span class="se">\n</span><span class="s2">&quot;</span>
+        <span class="p">)</span>
+
     <span class="nd">@wraps</span><span class="p">(</span><span class="n">func</span><span class="p">)</span>
     <span class="k">def</span> <span class="nf">wrapped</span><span class="p">(</span><span class="o">*</span><span class="n">args</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">):</span>
         <span class="k">try</span><span class="p">:</span>
-            <span class="n">func_level</span> <span class="o">=</span> <span class="n">_func_increment_nesting</span><span class="p">()</span>
+            <span class="n">func_level</span> <span class="o">=</span> <span class="n">_func_increment_nesting</span><span class="p">(</span><span class="n">reapply_views</span><span class="p">)</span>
             <span class="n">func_args</span> <span class="o">=</span> <span class="n">_wrap_all_tensors_to_functional</span><span class="p">(</span><span class="n">args</span><span class="p">,</span> <span class="n">func_level</span><span class="p">)</span>
             <span class="n">func_kwargs</span> <span class="o">=</span> <span class="n">_wrap_all_tensors_to_functional</span><span class="p">(</span><span class="n">kwargs</span><span class="p">,</span> <span class="n">func_level</span><span class="p">)</span>
 
@@ -1474,7 +1488,7 @@
             <span class="n">flattened_wrapped_kwargs</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">tree_flatten</span><span class="p">(</span><span class="n">func_kwargs</span><span class="p">)</span>
 
             <span class="n">func_outputs</span> <span class="o">=</span> <span class="n">func</span><span class="p">(</span><span class="o">*</span><span class="n">func_args</span><span class="p">,</span> <span class="o">**</span><span class="n">func_kwargs</span><span class="p">)</span>
-            <span class="n">outputs</span> <span class="o">=</span> <span class="n">_unwrap_all_tensors_from_functional</span><span class="p">(</span><span class="n">func_outputs</span><span class="p">)</span>
+            <span class="n">outputs</span> <span class="o">=</span> <span class="n">_unwrap_all_tensors_from_functional</span><span class="p">(</span><span class="n">func_outputs</span><span class="p">,</span> <span class="n">reapply_views</span><span class="o">=</span><span class="n">reapply_views</span><span class="p">)</span>
             <span class="n">flat_outputs</span><span class="p">,</span> <span class="n">func_out_spec</span> <span class="o">=</span> <span class="n">tree_flatten</span><span class="p">(</span><span class="n">outputs</span><span class="p">)</span>
 
             <span class="k">for</span> <span class="n">a</span> <span class="ow">in</span> <span class="n">flattened_wrapped_args</span> <span class="o">+</span> <span class="n">flattened_wrapped_kwargs</span><span class="p">:</span>
